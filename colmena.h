@@ -5,27 +5,57 @@
 #include <semaphore.h>
 #include <stdbool.h>
 
-typedef enum { WORKER, QUEEN } abeja_tipo;
+typedef enum
+{
+    WORKER,
+    QUEEN
+} abeja_tipo;
 
-typedef struct {
+typedef struct
+{
     abeja_tipo tipo;
     int pollen_collected;
     bool alive;
 } abeja_t;
 
-typedef struct pcb {
+
+typedef struct pcb
+{
     int id;
+
     long arrival_ms;
+
     long last_start_ms;
     long total_exec_ms;
+
     int iterations;
-    long io_wait_ms;
-    long avg_io_wait_ms;
-    long ready_wait_ms;
-    long avg_ready_wait_ms;
+
+    long io_wait_ms;         // tiempo TOTAL de E/S
+    long avg_io_wait_ms;     // promedio de E/S
+
+    long ready_wait_ms;      // tiempo TOTAL en READY
+    long avg_ready_wait_ms;  // promedio READY
+
+    int ready_count;         // cuántas veces entró a READY
+    int io_count;            // cuántas veces hizo E/S
+
+    int code_progress;       // avance simulado del "código"
+    int last_quantum_ms; 
 } pcb_t;
 
-typedef struct colmena {
+
+
+// Cada celda puede ser:
+// 0 = vacía
+// value > 0 = polen almacenado
+// valor negativo = miel 
+typedef struct celda
+{
+    int contenido;
+} celda_t;
+
+typedef struct colmena
+{
     int id;
     pthread_t thread;
     pthread_mutex_t lock;
@@ -40,7 +70,12 @@ typedef struct colmena {
     long miel;
     long polen_acumulado;
 
+    celda_t camara[10][10];
+
     pcb_t pcb;
+
+    pthread_cond_t io_cond;
+    bool waiting_io;
 
     bool alive;
     struct colmena *next;
@@ -48,7 +83,8 @@ typedef struct colmena {
     char logfile[256];
 } colmena_t;
 
-colmena_t* crear_colmena(int id);
+
+colmena_t *crear_colmena(int id);
 void iniciar_colmena(colmena_t *c);
 void detener_colmena(colmena_t *c);
 int obtener_abejas(colmena_t *c);
@@ -57,4 +93,4 @@ int obtener_huevos(colmena_t *c);
 void set_running(colmena_t *c, bool run);
 void escribir_log_colmena(colmena_t *c);
 
-#endif // COLMENA_H
+#endif 
