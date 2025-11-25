@@ -18,7 +18,6 @@ typedef struct
     bool alive;
 } abeja_t;
 
-
 typedef struct pcb
 {
     int id;
@@ -30,28 +29,26 @@ typedef struct pcb
 
     int iterations;
 
-    long io_wait_ms;         // tiempo TOTAL de E/S
-    long avg_io_wait_ms;     // promedio de E/S
+    long io_wait_ms;     // tiempo TOTAL de E/S
+    long avg_io_wait_ms; // promedio de E/S
 
-    long ready_wait_ms;      // tiempo TOTAL en READY
-    long avg_ready_wait_ms;  // promedio READY
+    long ready_wait_ms;     // tiempo TOTAL en READY
+    long avg_ready_wait_ms; // promedio READY
 
-    int ready_count;         // cuántas veces entró a READY
-    int io_count;            // cuántas veces hizo E/S
+    int ready_count; // cuántas veces entró a READY
+    int io_count;    // cuántas veces hizo E/S
 
-    int code_progress;       // avance simulado del "código"
-    int last_quantum_ms; 
+    int code_progress; // avance simulado del "código"
+    int last_quantum_ms;
 } pcb_t;
 
 
-
-// Cada celda puede ser:
-// 0 = vacía
-// value > 0 = polen almacenado
-// valor negativo = miel 
 typedef struct celda
 {
-    int contenido;
+    int contenido;       // >0: algo en la celda (huevos/polen según zona)
+    long egg_birth_ms;   // momento en que se agregaron huevos
+    long hatch_delay_ms; // tiempo en ms que deben esperar esos huevos
+
 } celda_t;
 
 typedef struct colmena
@@ -81,8 +78,12 @@ typedef struct colmena
     struct colmena *next;
 
     char logfile[256];
-} colmena_t;
+    pthread_t hilo_recoleccion;
+    pthread_t hilo_miel;
+    pthread_t hilo_huevos;
 
+    bool sub_hilos_activos;
+} colmena_t;
 
 colmena_t *crear_colmena(int id);
 void iniciar_colmena(colmena_t *c);
@@ -93,4 +94,4 @@ int obtener_huevos(colmena_t *c);
 void set_running(colmena_t *c, bool run);
 void escribir_log_colmena(colmena_t *c);
 
-#endif 
+#endif

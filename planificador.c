@@ -25,7 +25,10 @@ static int rr_quantum_ms = 5;
 static int rr_cycle_count = 0;
 static int rr_cycles_to_adjust = 5;
 
-//un helper que asegura la cantidad de las reinas
+static int total_colmenas = 0;
+
+
+// Helper para aumentar capacidad de abejas en splits ---
 static void asegurar_capacity_colmena(colmena_t *c, int extra)
 {
     if (c->abeja_count + extra > c->abeja_capacity)
@@ -49,7 +52,9 @@ static void asegurar_capacity_colmena(colmena_t *c, int extra)
 void planificador_add_colmena(colmena_t *c)
 {
     pthread_mutex_lock(&list_lock);
+
     c->next = NULL;
+
     if (!head)
         head = c;
     else
@@ -59,9 +64,14 @@ void planificador_add_colmena(colmena_t *c)
             p = p->next;
         p->next = c;
     }
+
+    total_colmenas++;  
+
     pthread_mutex_unlock(&list_lock);
 }
 
+
+// eliminar colmena
 void planificador_remove_colmena(int id)
 {
     pthread_mutex_lock(&list_lock);
@@ -72,6 +82,9 @@ void planificador_remove_colmena(int id)
         {
             colmena_t *to = *pp;
             *pp = to->next;
+
+            total_colmenas--;  
+
             pthread_mutex_unlock(&list_lock);
             detener_colmena(to);
             return;
@@ -81,19 +94,22 @@ void planificador_remove_colmena(int id)
     pthread_mutex_unlock(&list_lock);
 }
 
+
 sched_policy_t planificador_get_policy()
 {
     return current_policy;
 }
 
 
+//Ajuste quantum RR 
 void cambiar_quantum_random()
 {
     rr_quantum_ms = rand_range(2, 10);
     gstats.quantum_actual = rr_quantum_ms;
 }
 
-//selectores de politica
+
+//SELECTORES DE POLÍTICA 
 
 static colmena_t *elegir_sjf()
 {
@@ -118,6 +134,7 @@ static colmena_t *elegir_sjf()
     return best;
 }
 
+
 static colmena_t *elegir_dyn()
 {
     pthread_mutex_lock(&list_lock);
@@ -141,6 +158,7 @@ static colmena_t *elegir_dyn()
     return best;
 }
 
+
 static colmena_t *elegir_rr(colmena_t **last_rr)
 {
     pthread_mutex_lock(&list_lock);
@@ -148,6 +166,7 @@ static colmena_t *elegir_rr(colmena_t **last_rr)
     colmena_t *p = (*last_rr) ? (*last_rr)->next : head;
     if (!p)
         p = head;
+
     if (!p)
     {
         pthread_mutex_unlock(&list_lock);
@@ -161,8 +180,8 @@ static colmena_t *elegir_rr(colmena_t **last_rr)
     return sel;
 }
 
-//Cambio de politica por se;al
 
+// Cambio manual de política 
 static void sigusr1_handler(int signo)
 {
     (void)signo;
@@ -182,22 +201,31 @@ void planificador_switch_policy_manual()
     sigusr1_handler(0);
 }
 
-//La migracion al crear una nueva reina
+
+// CONTROL DE REINAS Y SPLIT
 
 static void revisar_reinas_y_split(void)
 {
     pthread_mutex_lock(&list_lock);
+
+    if (total_colmenas >= 40)
+    {
+        pthread_mutex_unlock(&list_lock);
+        return;
+    }
 
     for (colmena_t *p = head; p; p = p->next)
     {
         pthread_mutex_lock(&p->lock);
 
         bool found_queen = false;
+
+        // Buscar reina en colmena madre
         for (int i = 0; i < p->abeja_count; ++i)
         {
             if (p->abejas[i].tipo == QUEEN)
             {
-                //La reina se queda como WORKER en la colmena madre
+                // La reina se convierte en WORKER en la colmena madre
                 p->abejas[i].tipo = WORKER;
                 found_queen = true;
                 break;
@@ -210,27 +238,38 @@ static void revisar_reinas_y_split(void)
             continue;
         }
 
-        //Crear nueva colmena hija 
+        // Protección por si justo se llegó a 40 aquí
+        if (total_colmenas >= 40)
+        {
+            pthread_mutex_unlock(&p->lock);
+            break;
+        }
+
+        //crear nueva colmena hija ---
         int nid = ++next_id;
         colmena_t *nc = crear_colmena(nid);
 
         pthread_mutex_lock(&nc->lock);
 
-        //Limpiar estado aleatorio inicial de la hija 
-        free(nc->abejas);
-        nc->abejas = NULL;
-        nc->abeja_capacity = 0;
-        nc->abeja_count = 0;
+        nc->abeja_count = 0;          
 
         nc->huevos = 0;
         nc->miel = 0;
         nc->polen_acumulado = 0;
-        for (int x = 0; x < 10; ++x)
-            for (int y = 0; y < 10; ++y)
-                nc->camara[x][y].contenido = 0;
 
-        //1) Migrar la mitad de las abejas vivas 
+        for (int x = 0; x < 10; ++x)
+        {
+            for (int y = 0; y < 10; ++y)
+            {
+                nc->camara[x][y].contenido = 0;
+                nc->camara[x][y].egg_birth_ms = 0;
+                nc->camara[x][y].hatch_delay_ms = 0;
+            }
+        }
+
+        // --- Migrar 50% de abejas vivas ---
         int transfer_bees = p->abeja_count / 2;
+
         for (int t = 0; t < transfer_bees; ++t)
         {
             if (p->abeja_count <= 0)
@@ -245,22 +284,22 @@ static void revisar_reinas_y_split(void)
             nc->abejas[nc->abeja_count++] = mover;
         }
 
-        //2) Migrar 1/3 de la miel 
+        // --- Migrar 1/3 miel ---
         long transfer_miel = p->miel / 3;
         p->miel -= transfer_miel;
         nc->miel += transfer_miel;
 
-        //3) Migrar 1/3 de los huevos 
+        // --- Migrar 1/3 huevos ---
         int transfer_huevos = p->huevos / 3;
         p->huevos -= transfer_huevos;
         nc->huevos += transfer_huevos;
 
-        //4) Migrar 1/3 del polen acumulado
+        // --- Migrar 1/3 polen ---
         long transfer_polen = p->polen_acumulado / 3;
         p->polen_acumulado -= transfer_polen;
         nc->polen_acumulado += transfer_polen;
 
-        // 5) Migrar 1/3 del contenido de la cámara 
+        // --- Migrar 1/3 la cámara ---
         for (int x = 0; x < 10; ++x)
         {
             for (int y = 0; y < 10; ++y)
@@ -275,18 +314,24 @@ static void revisar_reinas_y_split(void)
         pthread_mutex_unlock(&p->lock);
         pthread_mutex_unlock(&nc->lock);
 
-        //añadimos la nueva colmena a la lista global, si modifican no llamen al  planificador_add_colmena por que es lo que hacia el bloqueo infinto
+        // Insertar hija al inicio (sin planificador_add_colmena, evita deadlock)
         nc->next = head;
         head = nc;
 
-        //arrancasmo un hulo
+        total_colmenas++;
+
         iniciar_colmena(nc);
+
+        // Protección final: si llegamos justo a 40, detener más splits
+        if (total_colmenas >= 40)
+            break;
     }
 
     pthread_mutex_unlock(&list_lock);
 }
 
-//hilo del planificado
+
+//HILO PRINCIPAL DEL PLANIFICADOR
 
 static void *sched_thread_fn(void *arg)
 {
@@ -297,6 +342,7 @@ static void *sched_thread_fn(void *arg)
     {
         colmena_t *selected = NULL;
 
+        // --- Política RR ---
         if (current_policy == POLICY_RR)
         {
             selected = elegir_rr(&last_rr);
@@ -312,12 +358,10 @@ static void *sched_thread_fn(void *arg)
             gstats.last_selected_id = selected->id;
             gstats.quantum_actual = rr_quantum_ms;
 
-            //RR: activar solo la colmena seleccionada 
+
             pthread_mutex_lock(&list_lock);
             for (colmena_t *p = head; p; p = p->next)
-            {
                 set_running(p, p == selected);
-            }
             pthread_mutex_unlock(&list_lock);
 
             gstats.context_switches++;
@@ -331,6 +375,8 @@ static void *sched_thread_fn(void *arg)
                 rr_cycle_count = 0;
             }
         }
+
+        // --- Política SJF ---
         else if (current_policy == POLICY_SJF)
         {
             selected = elegir_sjf();
@@ -348,15 +394,15 @@ static void *sched_thread_fn(void *arg)
 
             pthread_mutex_lock(&list_lock);
             for (colmena_t *p = head; p; p = p->next)
-            {
                 set_running(p, p == selected);
-            }
             pthread_mutex_unlock(&list_lock);
 
             gstats.context_switches++;
 
             usleep(8 * 1000);
         }
+
+        // --- Política Prioridades Dinámicas ---
         else if (current_policy == POLICY_DYN)
         {
             selected = elegir_dyn();
@@ -371,25 +417,20 @@ static void *sched_thread_fn(void *arg)
             gstats.sched_cycles++;
             gstats.last_selected_id = selected->id;
 
-            int q = 5;
+
             pthread_mutex_lock(&selected->lock);
             long miel = selected->miel;
             pthread_mutex_unlock(&selected->lock);
 
-            if (miel < 10)
-                q = 12;
-            else if (miel < 30)
-                q = 8;
-            else
-                q = 4;
+            int q = (miel < 10) ? 12 :
+                    (miel < 30) ? 8 :
+                                   4;
 
             gstats.quantum_actual = q;
 
             pthread_mutex_lock(&list_lock);
             for (colmena_t *p = head; p; p = p->next)
-            {
                 set_running(p, p == selected);
-            }
             pthread_mutex_unlock(&list_lock);
 
             gstats.context_switches++;
@@ -397,16 +438,16 @@ static void *sched_thread_fn(void *arg)
             usleep(q * 1000);
         }
 
-        //Split de colmenas cuando aparezca reina 
+        // --- SPLIT por reinas ---
         revisar_reinas_y_split();
 
-        //Actualizar tabla global de procesos 
+        // --- Actualizar tabla global ---
         tabla_global_actualizar();
 
         usleep(500);
     }
 
-    //apagar todas las colmenas al salir 
+    // Apagar colmenas al detener planificador
     pthread_mutex_lock(&list_lock);
     for (colmena_t *p = head; p; p = p->next)
         set_running(p, false);
@@ -416,6 +457,8 @@ static void *sched_thread_fn(void *arg)
 }
 
 
+
+//CONTROL DEL PLANIFICADOR
 
 void planificador_start()
 {
@@ -446,4 +489,33 @@ void planificador_stop()
     }
     head = NULL;
     pthread_mutex_unlock(&list_lock);
+}
+ 
+int planificador_crear_manual()
+{
+    extern int total_colmenas;
+
+    pthread_mutex_lock(&list_lock);
+
+    if (total_colmenas >= 40)
+    {
+        pthread_mutex_unlock(&list_lock);
+        printf("[!] No se puede crear más colmenas (máximo 40).\n");
+        return -1;
+    }
+
+    int nid = ++next_id;
+    colmena_t *c = crear_colmena(nid);
+
+    // Insertarla al inicio de la lista
+    c->next = head;
+    head = c;
+
+    total_colmenas++;
+
+    pthread_mutex_unlock(&list_lock);
+
+    iniciar_colmena(c);
+
+    return nid;
 }

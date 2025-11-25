@@ -43,8 +43,9 @@ typedef struct
     long context_switches;
     int last_selected_id;
     int quantum_actual;
+
 } global_stats_t;
 
 extern global_stats_t gstats;
 
-#endif 
+#endif
