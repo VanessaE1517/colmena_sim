@@ -28,7 +28,7 @@ static int rr_cycles_to_adjust = 5;
 static int total_colmenas = 0;
 
 
-// Helper para aumentar capacidad de abejas en splits ---
+// Helper para aumentar capacidad de abejas en splits 
 static void asegurar_capacity_colmena(colmena_t *c, int extra)
 {
     if (c->abeja_count + extra > c->abeja_capacity)
@@ -245,7 +245,7 @@ static void revisar_reinas_y_split(void)
             break;
         }
 
-        //crear nueva colmena hija ---
+        //crear nueva colmena hija 
         int nid = ++next_id;
         colmena_t *nc = crear_colmena(nid);
 
@@ -267,7 +267,7 @@ static void revisar_reinas_y_split(void)
             }
         }
 
-        // --- Migrar 50% de abejas vivas ---
+        // Migrar 50% de abejas vivas 
         int transfer_bees = p->abeja_count / 2;
 
         for (int t = 0; t < transfer_bees; ++t)
@@ -289,17 +289,17 @@ static void revisar_reinas_y_split(void)
         p->miel -= transfer_miel;
         nc->miel += transfer_miel;
 
-        // --- Migrar 1/3 huevos ---
+        // Migrar 1/3 huevos 
         int transfer_huevos = p->huevos / 3;
         p->huevos -= transfer_huevos;
         nc->huevos += transfer_huevos;
 
-        // --- Migrar 1/3 polen ---
+        // Migrar 1/3 polen 
         long transfer_polen = p->polen_acumulado / 3;
         p->polen_acumulado -= transfer_polen;
         nc->polen_acumulado += transfer_polen;
 
-        // --- Migrar 1/3 la cámara ---
+        // Migrar 1/3 la cámara 
         for (int x = 0; x < 10; ++x)
         {
             for (int y = 0; y < 10; ++y)
